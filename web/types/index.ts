@@ -36,3 +36,15 @@ export interface FormState {
   error?: string;
   values?: Record<string, string>;
 }
+
+export interface PromptArgument {
+  name: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface PromptInfo {
+  name: string;
+  description?: string;
+  arguments: PromptArgument[];
+}

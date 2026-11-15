@@ -1,6 +1,7 @@
 import "server-only";
 import { openMcp } from "@/lib/mcp";
-import type { ToolResult } from "@/types";
+import { parseToolOutput } from "@/lib/tool-output";
+import type { PromptInfo, ToolResult } from "@/types";
 
 type McpClient = Awaited<ReturnType<typeof openMcp>>;
 
@@ -26,23 +27,6 @@ export function readResourceJson<T>(uri: string): Promise<T> {
   });
 }
 
-function toToolResult(raw: unknown): ToolResult {
-  if (typeof raw === "object" && raw !== null && "content" in raw) {
-    const { content, isError } = raw as { content: unknown; isError?: boolean };
-    const parts = Array.isArray(content) ? content : [];
-    const text = parts
-      .map((part) =>
-        typeof part === "object" && part !== null && "text" in part && typeof part.text === "string"
-          ? part.text
-          : "",
-      )
-      .filter(Boolean)
-      .join("\n");
-    return { ok: !isError, text };
-  }
-  return { ok: true, text: typeof raw === "string" ? raw : JSON.stringify(raw) };
-}
-
 // Отказ инструмента (isError) возвращается как результат, а не как исключение:
 // текст ToolError показываем человеку без изменений.
 export function callSalonTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -55,7 +39,37 @@ export function callSalonTool(name: string, args: Record<string, unknown>): Prom
     const raw = await tool.execute(args, {
       messages: [],
       toolCallId: `panel-${name}-${Date.now()}`,
+      context: {},
     });
-    return toToolResult(raw);
+    const parsed = parseToolOutput(raw);
+    return { ok: !parsed.isError, text: parsed.text };
+  });
+}
+
+export function listPrompts(): Promise<PromptInfo[]> {
+  return withMcp(async (mcp) => {
+    const result = await mcp.experimental_listPrompts();
+    return result.prompts.map((prompt) => ({
+      name: prompt.name,
+      description: prompt.description,
+      arguments: (prompt.arguments ?? []).map((arg) => ({
+        name: arg.name,
+        description: arg.description,
+        required: arg.required,
+      })),
+    }));
+  });
+}
+
+export function getPromptText(name: string, args: Record<string, string>): Promise<string> {
+  return withMcp(async (mcp) => {
+    const result = await mcp.experimental_getPrompt({ name, arguments: args });
+    const texts = result.messages
+      .map((message) => (message.content.type === "text" ? message.content.text : ""))
+      .filter(Boolean);
+    if (texts.length === 0) {
+      throw new Error(`Промпт ${name} вернул пустой текст`);
+    }
+    return texts.join("\n\n");
   });
 }
