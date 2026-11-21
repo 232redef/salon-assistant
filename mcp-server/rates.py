@@ -32,26 +32,26 @@ async def get_rates(base: str = "RUB") -> dict[str, float]:
             data = response.json()
     except httpx2.TimeoutException:
         raise ExternalServiceError(
-            "Сервис курсов валют не ответил вовремя. Повторите позже или назовите стоимость в рублях."
+            "Сервис курсов валют не ответил вовремя. Попробуйте позже или повторите расчёт в рублях (currency=RUB)."
         )
     except httpx2.HTTPStatusError as error:
         raise ExternalServiceError(
             f"Сервис курсов валют вернул ошибку {error.response.status_code}. "
-            "Повторите позже или назовите стоимость в рублях."
+            "Попробуйте позже или повторите расчёт в рублях (currency=RUB)."
         )
     except httpx2.RequestError:
         raise ExternalServiceError(
-            "Не удалось связаться с сервисом курсов валют. Повторите позже или назовите стоимость в рублях."
+            "Не удалось связаться с сервисом курсов валют. Попробуйте позже или повторите расчёт в рублях (currency=RUB)."
         )
     except ValueError:
         raise ExternalServiceError(
-            "Сервис курсов валют вернул повреждённый ответ. Повторите позже или назовите стоимость в рублях."
+            "Сервис курсов валют вернул повреждённый ответ. Попробуйте позже или повторите расчёт в рублях (currency=RUB)."
         )
 
     table = data.get("rates") if isinstance(data, dict) else None
     if not isinstance(table, dict) or not table:
         raise ExternalServiceError(
-            "Сервис курсов валют вернул ответ в неожиданном формате. Назовите стоимость в рублях."
+            "Сервис курсов валют вернул ответ в неожиданном формате. Повторите расчёт в рублях (currency=RUB)."
         )
 
     _cache[base] = (time.monotonic(), table)
