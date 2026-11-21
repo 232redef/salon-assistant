@@ -4,6 +4,7 @@ import re
 import secrets
 import sys
 from collections.abc import Callable
+from datetime import datetime
 from typing import TypeVar
 
 from mcp.server import MCPServer
@@ -72,6 +73,11 @@ def _booking_line(booking: dict) -> str:
     return line
 
 
+def _log(tool: str, **args: object) -> None:
+    shown = ", ".join(f"{key}={str(value)[:60]!r}" for key, value in args.items())
+    print(f"[{datetime.now():%H:%M:%S}] ВЫЗОВ {tool}({shown})", flush=True)
+
+
 def _json(data: object) -> str:
     return json.dumps(data, ensure_ascii=False)
 
@@ -85,6 +91,7 @@ def find_free_slots(master: str, date: str, service: str) -> str:
     master: имя мастера. date: дата в формате ГГГГ-ММ-ДД.
     service: название услуги из справочника. Возвращает время начала свободных окон.
     """
+    _log("find_free_slots", master=master, date=date, service=service)
     slots = _call(db.find_free_slots, master, date, service)
     if not slots:
         return f"Свободных окон у мастера {master} на {date} для услуги «{service}» нет."
@@ -97,6 +104,7 @@ def get_master_schedule(master: str, date: str) -> str:
 
     master: имя мастера. date: дата в формате ГГГГ-ММ-ДД.
     """
+    _log("get_master_schedule", master=master, date=date)
     schedule = _call(db.master_schedule, master, date)
     if not schedule["works"]:
         return f"Мастер {schedule['master']} не работает {schedule['date']}."
@@ -113,6 +121,7 @@ def search_bookings(client: str = "", phone: str = "", date: str = "", status: s
     Все параметры необязательные и комбинируются. date: дата в формате ГГГГ-ММ-ДД.
     status: booked, completed, no_show или cancelled. Возвращает не больше 50 записей.
     """
+    _log("search_bookings", client=client, phone=phone, date=date, status=status)
     found = _call(db.search_bookings, client, phone, date, status)
     if not found:
         return "Записей не найдено."
@@ -126,11 +135,12 @@ def search_bookings(client: str = "", phone: str = "", date: str = "", status: s
 def create_booking(client_name: str, phone: str, master: str, service: str, start: str, note: str = "") -> str:
     """Записывает клиента к мастеру на услугу.
 
-    client_name: имя клиента. phone: телефон, например +79991234567.
+    client_name: имя клиента в именительном падеже, а не в форме из фразы запроса. phone: телефон, например +79991234567.
     master: имя мастера. service: название услуги из справочника.
     start: дата и время начала в формате ГГГГ-ММ-ДДTЧЧ:ММ. note: заметка, необязательно.
     Если время занято, отказ содержит свободные окна.
     """
+    _log("create_booking", client_name=client_name, phone=phone, master=master, service=service, start=start)
     booking = _call(db.create_booking, client_name, phone, master, service, start, note)
     return "Запись создана. " + _booking_line(booking)
 
@@ -141,6 +151,7 @@ def reschedule_booking(booking_id: int, new_start: str) -> str:
 
     booking_id: номер записи. new_start: новое время в формате ГГГГ-ММ-ДДTЧЧ:ММ.
     """
+    _log("reschedule_booking", booking_id=booking_id, new_start=new_start)
     booking = _call(db.reschedule_booking, booking_id, new_start)
     return "Запись перенесена. " + _booking_line(booking)
 
@@ -151,6 +162,7 @@ def cancel_booking(booking_id: int) -> str:
 
     booking_id: номер записи.
     """
+    _log("cancel_booking", booking_id=booking_id)
     booking = _call(db.cancel_booking, booking_id)
     return "Запись отменена. " + _booking_line(booking)
 
@@ -162,6 +174,7 @@ def mark_visit(booking_id: int, status: str) -> str:
     booking_id: номер записи. status: completed, если клиент пришёл,
     или no_show, если не пришёл. Изменить отметку потом нельзя.
     """
+    _log("mark_visit", booking_id=booking_id, status=status)
     booking = _call(db.mark_visit, booking_id, status)
     return "Визит отмечен. " + _booking_line(booking)
 
@@ -173,6 +186,7 @@ async def calc_visit_cost(services: list[str], currency: str = "RUB") -> str:
     services: названия услуг из справочника. currency: трёхбуквенный код валюты;
     по умолчанию рубли. Для другой валюты курс берётся из внешнего сервиса.
     """
+    _log("calc_visit_cost", services=services, currency=currency)
     cost = _call(db.visit_cost, services)
     lines = [f"{item['service']}: {item['price_rub']} ₽, {item['duration_min']} мин" for item in cost["items"]]
     text = "\n".join(lines) + f"\nИтого: {cost['total_rub']} ₽, {cost['total_min']} мин."
@@ -198,9 +212,11 @@ def master_workload(date_from: str, date_to: str) -> str:
 
     date_from и date_to: даты в формате ГГГГ-ММ-ДД, период не длиннее 31 дня.
     """
+    _log("master_workload", date_from=date_from, date_to=date_to)
     rows = _call(db.master_workload, date_from, date_to)
     if not rows:
-        return "В этот период мастера не работают."
+        names = ", ".join(master["name"] for master in db.list_masters())
+        return f"В период {date_from} – {date_to} никто из мастеров ({names}) не работает."
     return "\n".join(
         f"{r['master']}, {r['date']}: {r['load_percent']}% ({r['booked_min']} из {r['work_min']} мин)"
         for r in rows
@@ -264,4 +280,7 @@ def master_load_report(master: str, date_from: str, date_to: str) -> str:
 
 if __name__ == "__main__":
     db.init_db()
-    mcp.run(transport="streamable-http")
+    try:
+        mcp.run(transport="streamable-http")
+    except KeyboardInterrupt:
+        print("Сервер остановлен.")
